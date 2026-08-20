@@ -1,0 +1,5 @@
+---
+# Shared across both [nextcloud] and [scanner] groups. Role-specific
+# variables live in group_vars/scanner.yml (nothing role-specific is
+# currently needed for [nextcloud] - it only ever reads/deletes the
+# source file, never creates or owns anything there).

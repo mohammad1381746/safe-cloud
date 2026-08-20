@@ -1,0 +1,23 @@
+# =============================================================================
+# Persistent virus-definition updater. Deploy this on every host that will
+# run the ClamAV scan container (see README "Deployment topologies").
+# =============================================================================
+FROM debian:12-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends clamav-freshclam ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /var/lib/clamav /var/log/clamav && \
+    chown -R clamav:clamav /var/lib/clamav /var/log/clamav
+
+COPY freshclam-entrypoint.sh /usr/local/bin/freshclam-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/freshclam-entrypoint.sh
+
+# Run as the unprivileged `clamav` user (created by the clamav-freshclam
+# package) from the start. freshclam only attempts to setuid()/initgroups()
+# to DatabaseOwner when it is launched as root - starting non-root avoids
+# that step entirely, so the container works correctly even with every
+# Linux capability dropped (see docker-compose.yml: cap_drop: ALL).
+USER clamav
+VOLUME ["/var/lib/clamav"]
+ENTRYPOINT ["/usr/local/bin/freshclam-entrypoint.sh"]

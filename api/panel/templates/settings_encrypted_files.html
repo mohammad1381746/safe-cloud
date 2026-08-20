@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Encrypted File Behavior - Upload Scanner{% endblock %}
+{% block content %}
+<a href="/settings" class="btn btn-outline-secondary btn-sm mb-3">&larr; Back to settings</a>
+<h3 class="mb-4">Encrypted File Behavior</h3>
+<p class="text-muted">
+    Detection is best-effort (ZIP/Office via structure inspection, PDF via <code>pypdf</code>). RAR/7z
+    and legacy .doc/.xls/.ppt password-protection generally cannot be reliably determined and are
+    treated as "Unknown encryption".
+</p>
+
+{% if saved %}<div class="alert alert-success py-2">Saved.</div>{% endif %}
+
+<form method="post" class="card shadow-sm" style="max-width: 40rem">
+    <div class="card-body">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% for category, label in categories %}
+        <div class="row mb-3 align-items-center">
+            <label class="col-sm-7 col-form-label">{{ label }}</label>
+            <div class="col-sm-5">
+                <select class="form-select" name="policy_{{ category }}">
+                    {% for opt in options %}
+                    <option value="{{ opt }}" {% if policies.get(category) == opt %}selected{% endif %}>{{ opt }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        {% endfor %}
+        <button type="submit" class="btn btn-primary">Save</button>
+    </div>
+</form>
+{% endblock %}

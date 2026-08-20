@@ -1,0 +1,37 @@
+[Unit]
+Description=Nextcloud Upload Scanner API (HTTP + PostgreSQL only - no Docker/Ansible/SSH)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=scanner
+Group=scanner
+# WorkingDirectory is api/'s own contents (main.py, config.py, ... live
+# directly here), matching the flat sibling-import convention used
+# throughout api/*.py (e.g. `from config import settings`, not
+# `from api.config import settings`) - see CLAUDE.md "Import convention".
+WorkingDirectory=/opt/nextcloud-upload-scanner/api
+EnvironmentFile=/opt/nextcloud-upload-scanner/.env
+ExecStart=/opt/nextcloud-upload-scanner/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=on-failure
+RestartSec=5
+
+# --- hardening ---
+# No ReadWritePaths needed - the API process only talks to PostgreSQL
+# over the network; it never touches the local filesystem beyond /tmp.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

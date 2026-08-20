@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Security Settings - Upload Scanner{% endblock %}
+{% block content %}
+<a href="/settings" class="btn btn-outline-secondary btn-sm mb-3">&larr; Back to settings</a>
+<h3 class="mb-4">Security Settings</h3>
+<p class="text-muted small">
+    These are stored in PostgreSQL and take effect immediately (no restart). A few related settings
+    (MAX_CONCURRENT_SCANS, DOCS_ENABLED, RETAIN_INFECTED_COPY) are environment variables instead - see
+    <code>.env</code> - because they're read once at process startup.
+</p>
+
+{% if saved %}<div class="alert alert-success py-2">Saved.</div>{% endif %}
+
+<form method="post" class="card shadow-sm" style="max-width: 44rem">
+    <div class="card-body">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        <h6>Retention</h6>
+        <div class="row g-3 mb-3">
+            <div class="col-md-4">
+                <label class="form-label">Scan history (days)</label>
+                <input class="form-control" type="number" name="scan_history_retention_days" value="{{ settings.scan_history_retention_days }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Staging (hours)</label>
+                <input class="form-control" type="number" name="staging_retention_hours" value="{{ settings.staging_retention_hours }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Quarantine (days)</label>
+                <input class="form-control" type="number" name="quarantine_retention_days" value="{{ settings.quarantine_retention_days }}">
+            </div>
+        </div>
+        <div class="form-check form-switch mb-4">
+            <input class="form-check-input" type="checkbox" name="audit_log_auto_prune" id="alap" {% if settings.audit_log_auto_prune %}checked{% endif %}>
+            <label class="form-check-label" for="alap">Auto-prune audit log (per scan history retention) - OFF by default; audit history is kept forever unless explicitly enabled</label>
+        </div>
+
+        <h6>Rate limiting</h6>
+        <div class="row g-3 mb-4">
+            <div class="col-md-6">
+                <label class="form-label">Uploads / minute (per API client)</label>
+                <input class="form-control" type="number" name="rate_limit_uploads_per_minute" value="{{ settings.rate_limit_uploads_per_minute }}">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Requests / minute (per API client)</label>
+                <input class="form-control" type="number" name="rate_limit_requests_per_minute" value="{{ settings.rate_limit_requests_per_minute }}">
+            </div>
+        </div>
+
+        <h6>File policy</h6>
+        <div class="mb-3">
+            <label class="form-label">Maximum file size (bytes)</label>
+            <input class="form-control" type="number" name="max_file_size_bytes" value="{{ settings.max_file_size_bytes }}">
+        </div>
+        <div class="row g-3 mb-3">
+            <div class="col-md-6">
+                <label class="form-label">Allowed extensions (comma-separated, empty = allow all)</label>
+                <input class="form-control" name="allowed_extensions" value="{{ settings.allowed_extensions | join(',') }}">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Blocked extensions</label>
+                <input class="form-control" name="blocked_extensions" value="{{ settings.blocked_extensions | join(',') }}">
+            </div>
+        </div>
+        <div class="row g-3 mb-3">
+            <div class="col-md-6">
+                <label class="form-label">Allowed MIME types (comma-separated, empty = allow all)</label>
+                <input class="form-control" name="allowed_mime_types" value="{{ settings.allowed_mime_types | join(',') }}">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Blocked MIME types</label>
+                <input class="form-control" name="blocked_mime_types" value="{{ settings.blocked_mime_types | join(',') }}">
+            </div>
+        </div>
+        <div class="form-text mb-3">
+            Extension/MIME allowlists are optional defense in depth, never the sole security control -
+            files are always scanned regardless of type unless explicitly blocked here.
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save</button>
+    </div>
+</form>
+{% endblock %}

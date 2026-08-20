@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Scan not found{% endblock %}
+{% block content %}
+<div class="alert alert-warning">Scan <code>{{ scan_id }}</code> was not found.</div>
+<a href="/scans" class="btn btn-outline-secondary btn-sm">&larr; Back to scans</a>
+{% endblock %}

@@ -1,0 +1,18 @@
+# Build context for the `api` service is now the repo root (see
+# docker-compose.yml). Keep local secrets, venvs, and unrelated
+# directories out of what gets sent to the Docker daemon / baked into
+# any image layer.
+api/.env
+api/.venv/
+api/venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/*.log
+.git/
+tests/
+docker/
+scripts/
+config/
+systemd/
+ssh/

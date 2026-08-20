@@ -1,0 +1,157 @@
+---
+# run_one_scanner.yml
+#
+# Included ONCE PER ENTRY in the `scanners` extra-var list (see
+# scan_pipeline.yml Play 2 / scan_uploaded_file.yml), via:
+#   include_tasks: tasks/run_one_scanner.yml
+#   loop: "{{ scanners }}"
+#   loop_control: { loop_var: scanner_item }
+#
+# Runs ONE scanner container against the already-staged input file and
+# appends its outcome to the `scan_results` fact list. A failure in ONE
+# scanner (container crash, timeout, missing result file) is caught here
+# and recorded as that scanner's own ERROR result - it does NOT abort
+# the other scanners in the profile or fail the play. The final
+# CLEAN/INFECTED/ERROR verdict across all scan_results entries is
+# calculated by api/policy.py, not here.
+#
+# Each scanner gets its OWN output subdirectory
+# ({{ output_dir }}/{{ scanner_item.slug }}) - scanners never share
+# output space.
+#
+# MOUNT STRATEGY (read this before changing volumes: below): the scanner
+# container this task starts is a SIBLING of `worker` (started via the
+# bind-mounted Docker socket), not a child - so Docker resolves bind-mount
+# SOURCE paths against the DAEMON's own filesystem, never against
+# `worker`'s own mount namespace. `{{ input_dir }}`/`{{ output_dir }}`
+# are only meaningful INSIDE `worker` (via the `staging_data` named
+# volume mounted there); bind-mounting them by raw absolute path from
+# here would silently produce an empty, disconnected directory instead
+# of an error (see CLAUDE.md's incident log). Mounting `staging_data` BY
+# NAME instead makes Docker resolve it correctly regardless of which
+# container asks - at the cost of the scanner container seeing the WHOLE
+# staging volume (all scans, not just this one) rather than a narrowly
+# bind-mounted single directory. Mitigated by: a read-only mount for
+# locating input, a separate mount for writing output only, and the
+# container's existing sandboxing (network_mode: none, cap_drop: ALL,
+# non-root, ephemeral). A future improvement, once minimum supported
+# Docker/community.docker versions are confirmed, is Docker's
+# `mounts: volume_options.subpath` (Engine 25+) to restore narrow
+# per-scan mount scoping without reintroducing this bug - not used here
+# yet since that compatibility hasn't been verified.
+
+- name: "Prepare output directory for {{ scanner_item.slug }}"
+  ansible.builtin.file:
+    path: "{{ output_dir }}/{{ scanner_item.slug }}"
+    state: directory
+    mode: "0777"
+    owner: "{{ scanner_service_user }}"
+    group: "{{ scanner_container_gid }}"
+
+- name: "Compute the staging volume's subpath for this scan ({{ scanner_item.slug }})"
+  ansible.builtin.set_fact:
+    _staging_relpath: "{{ staging_dir | regex_replace('^' + (staging_data_container_mount_point | regex_escape) + '/', '') }}"
+
+- name: "Compute sibling-container-visible paths for {{ scanner_item.slug }}"
+  ansible.builtin.set_fact:
+    _sibling_input_dir: "/staging_ro/{{ _staging_relpath }}/input"
+    _sibling_output_dir: "/staging_rw/{{ _staging_relpath }}/output/{{ scanner_item.slug }}"
+
+- block:
+    - name: "Run scanner container: {{ scanner_item.slug }}"
+      community.docker.docker_container:
+        name: "nc-scan-{{ request_id }}-{{ scanner_item.slug }}"
+        image: "{{ scanner_item.docker_image }}"
+        state: started
+        detach: false
+        cleanup: true
+        network_mode: none
+        privileged: false
+        read_only: true
+        user: "{{ scanner_container_uid }}:{{ scanner_container_gid }}"
+        capabilities: []
+        cap_drop:
+          - ALL
+        security_opts:
+          - no-new-privileges:true
+        tmpfs:
+          - "/tmp:rw,noexec,nosuid,size=64m"
+        env: >-
+          {{
+            {
+              'SCAN_INPUT_DIR': _sibling_input_dir,
+              'SCAN_OUTPUT_DIR': _sibling_output_dir
+            } | combine(scanner_item.env_vars | default({}))
+          }}
+        # scan_command was validated at admin-config time (see
+        # api/scanners.py::validate_scan_command - argument array only,
+        # restricted character set) and is passed through Ansible/Docker
+        # exec-form the whole way: never a shell string, never
+        # interpreted by /bin/sh. Only a literal string replace of the
+        # two recognized placeholders happens here - no re-templating of
+        # admin- or file-supplied content. ClamAV's own registered
+        # command (["/usr/local/bin/scan.sh"]) uses neither placeholder -
+        # it reads $SCAN_INPUT_DIR/$SCAN_OUTPUT_DIR from the env instead
+        # (see docker/scan.sh) - both are provided either way so a
+        # scanner can use whichever convention suits its own entrypoint.
+        command: >-
+          {{ scanner_item.scan_command
+             | map('replace', '{{FILE}}', _sibling_input_dir + '/' + source_filename)
+             | map('replace', '{{OUTPUT}}', _sibling_output_dir)
+             | list }}
+        volumes:
+          - "{{ staging_data_volume_name }}:/staging_ro:ro"
+          - "{{ staging_data_volume_name }}:/staging_rw:rw"
+          - "clamav_db:/var/lib/clamav:ro"
+        timeout: "{{ scanner_item.timeout_seconds | int }}"
+        cpus: "{{ scanner_item.cpu_limit | float }}"
+        memory: "{{ scanner_item.memory_limit_mb | int }}m"
+      register: scanner_container_result
+
+    - name: "Parse result for {{ scanner_item.slug }} (clamav_wrapper_json - container already wrote canonical JSON)"
+      when: scanner_item.result_parser == 'clamav_wrapper_json'
+      block:
+        - name: "Read result.json for {{ scanner_item.slug }}"
+          ansible.builtin.slurp:
+            src: "{{ output_dir }}/{{ scanner_item.slug }}/result.json"
+          register: _scanner_result_slurp
+
+        - name: "Append parsed result for {{ scanner_item.slug }}"
+          ansible.builtin.set_fact:
+            scan_results: >-
+              {{ scan_results + [
+                   (_scanner_result_slurp.content | b64decode | from_json)
+                   | combine({'scanner_name': scanner_item.name, 'scanner_slug': scanner_item.slug})
+                 ] }}
+
+    - name: "Parse result for {{ scanner_item.slug }} (generic_exit_code - no canonical JSON available)"
+      when: scanner_item.result_parser == 'generic_exit_code'
+      ansible.builtin.set_fact:
+        # HONEST LIMITATION: without a scanner-specific wrapper, only the
+        # container's process exit code is available - exit 0 -> CLEAN,
+        # anything else -> ERROR. This parser can NEVER report INFECTED;
+        # a scanner that needs real infection reporting must use
+        # clamav_wrapper_json (i.e. ship a wrapper entrypoint producing
+        # our canonical result.json, matching docker/scan.sh's contract).
+        scan_results: >-
+          {{ scan_results + [{
+               'status': 'CLEAN' if (scanner_container_result.container.State.ExitCode | default(1)) == 0 else 'ERROR',
+               'threat': None,
+               'scanner_version': None,
+               'message': 'generic_exit_code: process exited ' + (scanner_container_result.container.State.ExitCode | default(1)) | string,
+               'scanner_name': scanner_item.name,
+               'scanner_slug': scanner_item.slug,
+             }] }}
+
+  rescue:
+    - name: "Record scanner failure for {{ scanner_item.slug }} (does not abort the other scanners)"
+      ansible.builtin.set_fact:
+        scan_results: >-
+          {{ scan_results + [{
+               'status': 'ERROR',
+               'threat': None,
+               'scanner_version': None,
+               'message': ansible_failed_result.msg | default('Scanner container failed'),
+               'scanner_name': scanner_item.name,
+               'scanner_slug': scanner_item.slug,
+             }] }}

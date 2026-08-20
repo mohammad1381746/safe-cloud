@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Upload File - Upload Scanner{% endblock %}
+{% block content %}
+<h3 class="mb-1">Upload a file</h3>
+<p class="text-muted mb-4">Manually submit a file for scanning through the browser - goes through the exact same
+    pipeline as the API and the Nextcloud integration, tagged with source <code>panel</code>.</p>
+
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-7">
+        <form method="post" action="/upload" enctype="multipart/form-data" class="card shadow-sm" id="upload-form">
+            <div class="card-body">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                <label class="upload-drop d-flex flex-column align-items-center justify-content-center text-center p-5 mb-3" id="drop-zone" for="file-input" style="cursor:pointer">
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" class="text-primary mb-2">
+                        <path d="M12 3v12m0-12 4 4m-4-4-4 4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="fw-semibold" id="drop-zone-label">Drop a file here, or click to browse</span>
+                    <span class="text-muted small mt-1">Any file type - encrypted-file and extension policy are still enforced</span>
+                    <input type="file" name="file" id="file-input" class="d-none" required>
+                </label>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">On behalf of (username)</label>
+                        <input class="form-control" name="username" value="{{ form.username or default_username }}" placeholder="{{ default_username }}">
+                        <div class="form-text">Defaults to your own panel username if left blank.</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Scanner profile</label>
+                        <select class="form-select" name="profile">
+                            <option value="">System default</option>
+                            {% for p in profiles %}
+                            <option value="{{ p.slug }}" {% if form.profile == p.slug %}selected{% endif %}>{{ p.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="upload-submit-btn">
+                    <span id="upload-submit-label">Upload &amp; scan</span>
+                </button>
+                <a href="/scans" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+    <div class="col-lg-5">
+        <div class="card shadow-sm h-100">
+            <div class="card-header">What happens next</div>
+            <div class="card-body small text-muted">
+                <ol class="mb-0 ps-3">
+                    <li class="mb-2">The file is hashed (SHA-256/MD5) and staged on the Scanner Server as it uploads.</li>
+                    <li class="mb-2">It's checked for encryption/password-protection before any scanner touches it - the
+                        configured encrypted-file policy applies (see Settings).</li>
+                    <li class="mb-2">Every scanner in the selected profile runs in its own isolated, network-disabled
+                        container; results are combined per the profile's aggregation policy.</li>
+                    <li class="mb-0">You're redirected to the scan's detail page immediately - refresh it to watch the
+                        status move from <span class="badge text-bg-secondary rounded-pill">RECEIVED</span> to a final
+                        verdict.</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function () {
+        var input = document.getElementById('file-input');
+        var zone = document.getElementById('drop-zone');
+        var label = document.getElementById('drop-zone-label');
+        var form = document.getElementById('upload-form');
+        var btn = document.getElementById('upload-submit-btn');
+        var btnLabel = document.getElementById('upload-submit-label');
+
+        function showName() {
+            if (input.files && input.files[0]) {
+                label.textContent = input.files[0].name + ' (' + (input.files[0].size / 1024).toFixed(1) + ' KB)';
+            }
+        }
+        input.addEventListener('change', showName);
+
+        ['dragenter', 'dragover'].forEach(function (evt) {
+            zone.addEventListener(evt, function (e) { e.preventDefault(); zone.classList.add('dragover'); });
+        });
+        ['dragleave', 'drop'].forEach(function (evt) {
+            zone.addEventListener(evt, function (e) { e.preventDefault(); zone.classList.remove('dragover'); });
+        });
+        zone.addEventListener('drop', function (e) {
+            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                input.files = e.dataTransfer.files;
+                showName();
+            }
+        });
+
+        form.addEventListener('submit', function () {
+            btn.disabled = true;
+            btnLabel.textContent = 'Uploading...';
+        });
+    })();
+</script>
+{% endblock %}

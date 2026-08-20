@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if scanner and scanner.id else "New" }} Scanner - Upload Scanner{% endblock %}
+{% block content %}
+<a href="/scanners" class="btn btn-outline-secondary btn-sm mb-3">&larr; Back to scanners</a>
+<h3 class="mb-4">{{ "Edit scanner" if scanner and scanner.id else "New scanner" }}</h3>
+
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+<form method="post" class="card shadow-sm">
+    <div class="card-body">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        <div class="row g-3 mb-3">
+            <div class="col-md-6">
+                <label class="form-label">Name</label>
+                <input class="form-control" name="name" value="{{ scanner.name if scanner else '' }}" required>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Slug (lowercase, hyphens)</label>
+                <input class="form-control" name="slug" value="{{ scanner.slug if scanner else '' }}"
+                       {% if scanner and scanner.id %}readonly{% endif %} required>
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Description</label>
+            <input class="form-control" name="description" value="{{ scanner.description if scanner else '' }}">
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Docker image</label>
+            <input class="form-control font-monospace" name="docker_image"
+                   value="{{ scanner.docker_image if scanner else 'clamav/clamav:latest' }}" required>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Scan command (JSON array - Docker exec form, never a shell string)</label>
+            <textarea class="form-control font-monospace" name="scan_command_json" rows="3" required>{{ (scanner.scan_command if scanner and scanner.scan_command is not string else ['clamscan', '--no-summary', '{{FILE}}']) | tojson }}</textarea>
+            <div class="form-text">
+                Only <code>{{ '{{FILE}}' }}</code> and <code>{{ '{{OUTPUT}}' }}</code> placeholders are substituted at
+                scan time. Allowed characters: letters, digits, <code>./-_=:,+</code> and spaces. No shell metacharacters.
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Environment variables (JSON object, UPPER_SNAKE_CASE keys)</label>
+            <textarea class="form-control font-monospace" name="env_vars_json" rows="2">{{ (scanner.env_vars if scanner and scanner.env_vars else {}) | tojson }}</textarea>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Result parser</label>
+            <select class="form-select" name="result_parser">
+                <option value="clamav_wrapper_json" {% if not scanner or scanner.result_parser == 'clamav_wrapper_json' %}selected{% endif %}>
+                    clamav_wrapper_json - container writes our canonical result.json (recommended; can report CLEAN/INFECTED/ERROR)
+                </option>
+                <option value="generic_exit_code" {% if scanner and scanner.result_parser == 'generic_exit_code' %}selected{% endif %}>
+                    generic_exit_code - process exit code only (CLEAN/ERROR only - cannot report INFECTED)
+                </option>
+            </select>
+        </div>
+
+        <div class="row g-3 mb-3">
+            <div class="col-md-4">
+                <label class="form-label">Timeout (seconds)</label>
+                <input class="form-control" type="number" name="timeout_seconds" min="1" max="3600"
+                       value="{{ scanner.timeout_seconds if scanner else 120 }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">CPU limit</label>
+                <input class="form-control" type="number" step="0.1" name="cpu_limit" min="0.1" max="8"
+                       value="{{ scanner.cpu_limit if scanner else 1.0 }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Memory limit (MB)</label>
+                <input class="form-control" type="number" name="memory_limit_mb" min="64" max="16384"
+                       value="{{ scanner.memory_limit_mb if scanner else 512 }}">
+            </div>
+        </div>
+
+        <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" name="enabled" id="enabled"
+                   {% if not scanner or scanner.enabled %}checked{% endif %}>
+            <label class="form-check-label" for="enabled">Enabled</label>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save scanner</button>
+        {% if scanner and scanner.id %}
+        <button type="submit" form="delete-form-{{ scanner.id }}" class="btn btn-outline-danger float-end"
+                onclick="return confirm('Delete this scanner? Profiles referencing it will lose this entry.')">Delete</button>
+        {% endif %}
+    </div>
+</form>
+
+{% if scanner and scanner.id %}
+<form id="delete-form-{{ scanner.id }}" method="post" action="/scanners/{{ scanner.id }}/delete" class="d-none">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+</form>
+{% endif %}
+{% endblock %}

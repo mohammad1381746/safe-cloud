@@ -1,0 +1,40 @@
+---
+# OS user that owns the per-scan staging directories on the Scanner
+# Server before/after the ephemeral ClamAV container runs. This is the
+# SAME non-root user the `worker` container itself runs as (see
+# api/Dockerfile / docker-compose.yml) - since ansible_connection=local
+# for the [scanner] group, Ansible tasks execute as whatever OS user is
+# already running the worker process, so this must match that user's
+# name for the `owner:` fields in scan_pipeline.yml to be meaningful.
+#
+# NOT root: the worker does not run as root, and nothing in
+# scan_pipeline.yml's [scanner] play uses `become`.
+scanner_service_user: scanner
+
+# Numeric UID/GID baked into docker/Dockerfile's `clamscan` user. Staging
+# directories/files on the Scanner Server are group-owned by this numeric
+# GID (no matching /etc/group entry is required - Linux permission checks
+# are purely numeric) so the ephemeral scan container can read the
+# transferred file and write its result without running as root or
+# relaxing permissions to "other".
+scanner_container_gid: "10001"
+scanner_container_uid: "10001"
+
+# The `staging_data` named volume, and the absolute path it's mounted at
+# INSIDE `api`/`worker` (must match docker-compose.yml's
+# `- staging_data:/var/lib/upload-scanner` exactly). Ephemeral scanner
+# containers (nc-scan-*) are started by `worker` via the bind-mounted
+# Docker socket - they are SIBLINGS of `worker`, not children, so the
+# Docker daemon resolves any bind-mount SOURCE path against its OWN host
+# filesystem, not against `worker`'s mount namespace. A raw absolute path
+# like "{{ staging_dir }}/input" (meaningful only inside `worker`, via
+# this named volume) does NOT exist on the daemon's own filesystem, so
+# bind-mounting it directly silently produces an empty, disconnected
+# directory rather than an error - see CLAUDE.md's incident log ("no
+# input file found" / permission-denied-on-write even after loosening
+# file modes, both symptoms of the SAME wrong-directory problem, not a
+# permission-bits problem). Referencing the volume BY NAME instead (as
+# run_one_scanner.yml now does) lets Docker resolve it correctly
+# regardless of which container is asking.
+staging_data_volume_name: "staging_data"
+staging_data_container_mount_point: "/var/lib/upload-scanner"

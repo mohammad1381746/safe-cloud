@@ -1,0 +1,41 @@
+# /etc/file-upload-scanner.conf
+#
+# Install with:
+#   sudo install -o root -g root -m 0600 file-upload-scanner.conf.example /etc/file-upload-scanner.conf
+#
+# This file is sourced by scripts/generic-file-upload-scanner.sh. It must
+# never be world- or group-readable because it holds the API key.
+#
+# Used by ANY application/watcher that isn't the Nextcloud host itself -
+# NFS/SMB share watchers, custom upload handlers, CI, etc. Get an API
+# key from the panel: Settings -> API clients -> New API client. Give
+# each distinct application its OWN key (easier to revoke/audit
+# individually) rather than sharing one across everything.
+
+# Point this at the Scanner Server.
+SCANNER_API_URL="http://192.168.150.100:8000"
+API_KEY="sk_live_CHANGE_ME"
+
+# Optional: pin this application to a specific scanner profile (must
+# match a profile slug under /profiles in the panel). Leave blank to use
+# whatever the API key is pinned to (if any) or the system default.
+#SCANNER_PROFILE="high-security"
+
+# Reported as scans.source_application - lets you filter/tell apart
+# scans in the panel by which application/share they came from. Can be
+# overridden per-call via this script's 3rd argument.
+SOURCE_APPLICATION="nfs-share-watcher"
+
+# Used when this script is called without an explicit username argument.
+# Leave blank to fall back to this script's own OS user.
+#DEFAULT_USERNAME=""
+
+SCANNER_CURL_TIMEOUT=30
+SCANNER_CONNECT_TIMEOUT=5
+
+# How long the API itself will wait server-side for a terminal result
+# before this script falls back to its own client-side polling loop -
+# see generic-file-upload-scanner.sh's EXTRA_POLL_TIMEOUT/INTERVAL.
+SYNC_WAIT_TIMEOUT=60
+EXTRA_POLL_TIMEOUT=120
+EXTRA_POLL_INTERVAL=3

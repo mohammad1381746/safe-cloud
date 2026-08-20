@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Audit Log - Upload Scanner{% endblock %}
+{% block content %}
+<h3 class="mb-4">Audit Log <span class="text-muted fs-6">({{ "{:,}".format(total) }} total)</span></h3>
+
+<form method="get" action="/audit" class="row g-2 mb-3">
+    <div class="col-auto">
+        <input class="form-control form-control-sm" name="actor" placeholder="Actor" value="{{ filters.actor }}">
+    </div>
+    <div class="col-auto">
+        <input class="form-control form-control-sm" name="action" placeholder="Action" value="{{ filters.action }}">
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+        <a href="/audit" class="btn btn-outline-secondary btn-sm">Reset</a>
+    </div>
+</form>
+
+<div class="card shadow-sm">
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+            <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Object</th><th>IP</th><th>Metadata</th></tr></thead>
+            <tbody>
+            {% for e in entries %}
+            <tr>
+                <td class="small">{{ e.created_at.strftime('%Y-%m-%d %H:%M:%S') if e.created_at else '' }}</td>
+                <td>{{ e.actor }}</td>
+                <td><span class="badge rounded-pill text-bg-light border">{{ e.action }}</span></td>
+                <td class="small font-monospace">{{ e.object_type or '' }} {{ e.object_id or '' }}</td>
+                <td class="small">{{ e.ip_address or '' }}</td>
+                <td class="small font-monospace">{{ e.metadata | tojson if e.metadata else '' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-muted text-center py-4">No audit entries</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

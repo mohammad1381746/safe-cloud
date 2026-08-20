@@ -1,0 +1,129 @@
+---
+# scan_uploaded_file.yml
+#
+# Scan-only counterpart to scan_pipeline.yml, for files that arrived via
+# the universal upload API (POST /api/v1/files/upload) rather than a
+# Nextcloud path reference. The file's bytes were already written
+# directly to this SAME Scanner Server's staging input directory by
+# api/routes_upload.py (which also computed its own sha256 at upload
+# time, so there is no client-claimed-vs-actual gap to reconcile here the
+# way scan_pipeline.yml's Play 1 does for the Nextcloud path) - so there
+# is no Nextcloud host to validate against or fetch from, and this
+# playbook has exactly ONE play, targeting the `scanner` group only.
+#
+# Invoked by api/ansible_runner.py as:
+#   ansible-playbook -i inventory.ini scan_uploaded_file.yml \
+#       --limit scanner -e @extra_vars.json
+#
+# extra_vars.json supplies: request_id, staging_dir, source_filename,
+# expected_sha256 (computed by the API at upload time), scanners (same
+# shape as scan_pipeline.yml), result_file.
+
+- name: Scan a directly-uploaded file already staged on the Scanner Server
+  hosts: scanner
+  gather_facts: false
+  become: false
+
+  vars:
+    input_dir: "{{ staging_dir }}/input"
+    output_dir: "{{ staging_dir }}/output"
+    final_result: {}
+    scan_results: []
+
+  tasks:
+    - block:
+        - name: Verify the staged file exists
+          ansible.builtin.stat:
+            path: "{{ input_dir }}/{{ source_filename }}"
+            get_checksum: true
+            checksum_algorithm: sha256
+          register: staged_stat
+
+        - name: Fail if the staged file is missing
+          ansible.builtin.assert:
+            that: [staged_stat.stat.exists, staged_stat.stat.isreg]
+            fail_msg: "Staged file not found or not a regular file: {{ input_dir }}/{{ source_filename }}"
+
+        - name: Fail if the staged file's hash does not match what the API computed at upload time
+          ansible.builtin.assert:
+            that:
+              - staged_stat.stat.checksum == expected_sha256
+            fail_msg: >-
+              Staged file's sha256 ({{ staged_stat.stat.checksum }}) does not match the hash computed
+              at upload time ({{ expected_sha256 }}) - refusing to trust this file
+
+        - name: Ensure the staging output directory exists
+          ansible.builtin.file:
+            path: "{{ output_dir }}"
+            state: directory
+            mode: "0770"
+            owner: "{{ scanner_service_user }}"
+            group: "{{ scanner_container_gid }}"
+
+        - name: Fix ownership/permissions on the staging INPUT directory itself
+          ansible.builtin.file:
+            path: "{{ input_dir }}"
+            state: directory
+            mode: "0750"
+            owner: "{{ scanner_service_user }}"
+            group: "{{ scanner_container_gid }}"
+          # For transfer_mode=ansible_fetch this directory was already
+          # created with these exact permissions by
+          # fetch_from_nextcloud.yml (redundant here, harmless). For
+          # transfer_mode=direct_upload it was created by
+          # api/routes_upload.py's finalize_staged_upload() via a plain
+          # Python mkdir(mode=0o750) - which sets owner/group to whatever
+          # the `api` container's own process identity is (uid/gid 10002,
+          # its own "scanner" group), NOT scanner_container_gid (10001).
+          # Only the FILE inside got fixed below, never the directory
+          # CONTAINING it - so a scanner container (running as
+          # scanner_container_uid:scanner_container_gid, 10001:10001)
+          # could not even traverse into this directory to find the file,
+          # regardless of the file's own permissions. This went
+          # unnoticed until the DooD sibling-container mount-resolution
+          # bug (see CLAUDE.md's incident log) was fixed - before that,
+          # scan containers were never actually reaching a real,
+          # correctly-populated input directory at all, so this
+          # directory-level permission gap was never exercised/visible.
+
+        - name: Fix ownership/permissions on the staged file
+          ansible.builtin.file:
+            path: "{{ input_dir }}/{{ source_filename }}"
+            mode: "0440"
+            owner: "{{ scanner_service_user }}"
+            group: "{{ scanner_container_gid }}"
+
+        - name: Run every scanner in the profile against the staged file
+          ansible.builtin.include_tasks: tasks/run_one_scanner.yml
+          loop: "{{ scanners }}"
+          loop_control:
+            loop_var: scanner_item
+            label: "{{ scanner_item.slug }}"
+
+        - name: Build the final machine-readable result
+          ansible.builtin.set_fact:
+            final_result:
+              stage: "completed"
+              scan_results: "{{ scan_results }}"
+              actual_sha256: "{{ staged_stat.stat.checksum }}"
+              actual_size: "{{ staged_stat.stat.size }}"
+              filename: "{{ source_filename }}"
+              staging_dir: "{{ staging_dir }}"
+              request_id: "{{ request_id }}"
+
+      rescue:
+        - name: Record any precondition/scan failure as the final result (fail closed)
+          ansible.builtin.set_fact:
+            final_result:
+              stage: "precondition_failed"
+              failed_stage: "scanner"
+              status: "ERROR"
+              message: "{{ ansible_failed_result.msg | default('Scan pipeline failed on the Scanner Server') }}"
+              staging_dir: "{{ staging_dir }}"
+              request_id: "{{ request_id }}"
+
+      always:
+        - name: Write the final result to the well-known result file
+          ansible.builtin.copy:
+            content: "{{ final_result | to_nice_json }}"
+            dest: "{{ result_file }}"

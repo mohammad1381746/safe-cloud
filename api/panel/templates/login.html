@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Log in - Upload Scanner{% endblock %}
+{% block content %}
+<div class="row justify-content-center" style="margin-top: 8vh;">
+    <div class="col-md-4">
+        <div class="text-center mb-4">
+            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" class="text-primary mb-2">
+                <path d="M12 2 4 5v6c0 5 3.4 8.9 8 10 4.6-1.1 8-5 8-10V5l-8-3Z" fill="currentColor" opacity="0.9"/>
+                <path d="m9 12 2 2 4-4" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <h4 class="fw-bold mb-0">Upload Scanner</h4>
+            <div class="text-muted small">File Security Scanning Platform</div>
+        </div>
+        <div class="card shadow-sm">
+            <div class="card-body p-4">
+                {% if error %}
+                <div class="alert alert-danger py-2">{{ error }}</div>
+                {% endif %}
+                <form method="post" action="/login">
+                    <div class="mb-3">
+                        <label class="form-label" for="username">Username</label>
+                        <input class="form-control" id="username" name="username" autocomplete="username" required autofocus>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="password">Password</label>
+                        <input class="form-control" id="password" name="password" type="password" autocomplete="current-password" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Log in</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

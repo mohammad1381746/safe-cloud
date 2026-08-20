@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Scan {{ scan.id }} - Upload Scanner{% endblock %}
+{% block head %}
+{% if scan.status in ("RECEIVED", "VALIDATING", "TRANSFERRING", "SCANNING") %}
+<meta http-equiv="refresh" content="4">
+{% endif %}
+{% endblock %}
+{% block content %}
+{% if scan.status in ("RECEIVED", "VALIDATING", "TRANSFERRING", "SCANNING") %}
+<div class="alert alert-info py-2 small d-flex align-items-center gap-2">
+    <div class="spinner-border spinner-border-sm" role="status"></div>
+    Scan in progress - this page refreshes automatically every few seconds.
+</div>
+{% endif %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <a href="/scans" class="btn btn-outline-secondary btn-sm">&larr; Back to scans</a>
+    <form method="post" action="/scans/{{ scan.id }}/rescan">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn-outline-primary btn-sm">Re-scan</button>
+    </form>
+</div>
+
+<h3 class="mb-2">
+    Scan detail
+    <span class="badge rounded-pill text-bg-{{ scan.status | status_badge }} align-middle">{{ scan.status }}</span>
+</h3>
+
+{% if parent_scan %}
+<p class="text-muted small">This is a re-scan of <a href="/scans/{{ parent_scan.id }}">{{ parent_scan.id }}</a> ({{ parent_scan.status }}, {{ parent_scan.created_at.strftime('%Y-%m-%d %H:%M') if parent_scan.created_at else '' }})</p>
+{% endif %}
+{% if child_scans %}
+<p class="text-muted small">Re-scanned {{ child_scans | length }} time(s):
+    {% for c in child_scans %}<a href="/scans/{{ c.id }}">{{ c.status }} ({{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }})</a>{% if not loop.last %}, {% endif %}{% endfor %}
+</p>
+{% endif %}
+
+<div class="row g-4 mt-1">
+    <div class="col-md-7">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header">File information</div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-4">Filename</dt><dd class="col-sm-8">{{ scan.filename }}</dd>
+                    <dt class="col-sm-4">Original filename</dt><dd class="col-sm-8">{{ scan.original_filename or scan.filename }}</dd>
+                    <dt class="col-sm-4">MIME type</dt><dd class="col-sm-8">{{ scan.mime_type or "-" }}</dd>
+                    <dt class="col-sm-4">Extension</dt><dd class="col-sm-8">{{ scan.extension or "-" }}</dd>
+                    <dt class="col-sm-4">Size</dt><dd class="col-sm-8">{{ "{:,}".format(scan.original_size) }} bytes</dd>
+                    <dt class="col-sm-4">SHA256</dt><dd class="col-sm-8 font-monospace small">{{ scan.sha256 }}</dd>
+                    <dt class="col-sm-4">MD5</dt><dd class="col-sm-8 font-monospace small">{{ scan.md5 or "-" }}</dd>
+                    {% if scan.nextcloud_file_path %}
+                    <dt class="col-sm-4">Original path</dt><dd class="col-sm-8 font-monospace small">{{ scan.nextcloud_file_path }}</dd>
+                    {% endif %}
+                </dl>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-3">
+            <div class="card-header">User information</div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-4">Username</dt><dd class="col-sm-8">{{ scan.username }}</dd>
+                    <dt class="col-sm-4">User ID</dt><dd class="col-sm-8">{{ scan.user_id or "-" }}</dd>
+                    <dt class="col-sm-4">Email</dt><dd class="col-sm-8">{{ scan.email or "-" }}</dd>
+                    <dt class="col-sm-4">Department</dt><dd class="col-sm-8">{{ scan.department or "-" }}</dd>
+                    <dt class="col-sm-4">Source application</dt><dd class="col-sm-8">{{ scan.source_application }}</dd>
+                    <dt class="col-sm-4">API client</dt><dd class="col-sm-8">{{ scan.api_client_id or "-" }}</dd>
+                </dl>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-3">
+            <div class="card-header">Scanner results</div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    <thead><tr><th>Scanner</th><th>Version</th><th>Status</th><th>Threat</th><th>Message</th></tr></thead>
+                    <tbody>
+                    {% for r in scan_results %}
+                    <tr>
+                        <td>{{ r.scanner_name }}</td>
+                        <td class="small">{{ r.scanner_version or "-" }}</td>
+                        <td><span class="badge rounded-pill text-bg-{{ r.status | status_badge }}">{{ r.status }}</span></td>
+                        <td>{{ r.threat or "-" }}</td>
+                        <td class="small">{{ r.raw_output or "" }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5" class="text-muted text-center py-3">No individual scanner results (scan may not have reached the scanning stage)</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-3">
+            <div class="card-header">Policy</div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-4">Scanner profile</dt><dd class="col-sm-8">{{ scan.scanner_profile_id or "(default)" }}</dd>
+                    <dt class="col-sm-4">Aggregation policy</dt><dd class="col-sm-8">{{ scan.aggregation_policy_applied or "-" }}</dd>
+                    <dt class="col-sm-4">Encrypted</dt>
+                    <dd class="col-sm-8">
+                        {% if scan.encrypted is none %}<span class="text-muted">not checked / unknown</span>
+                        {% elif scan.encrypted %}<span class="text-warning-emphasis">yes ({{ scan.encryption_type or "unknown type" }})</span>
+                        {% else %}no{% endif %}
+                    </dd>
+                    {% if scan.encrypted_policy_applied %}
+                    <dt class="col-sm-4">Encrypted policy applied</dt><dd class="col-sm-8">{{ scan.encrypted_policy_applied }}</dd>
+                    {% endif %}
+                    <dt class="col-sm-4">Needs review</dt><dd class="col-sm-8">{{ "yes" if scan.needs_review else "no" }}</dd>
+                    <dt class="col-sm-4">Final decision</dt>
+                    <dd class="col-sm-8">
+                        {% if scan.allowed is none %}<span class="text-muted">pending</span>
+                        {% elif scan.allowed %}<span class="text-success fw-bold">ALLOWED</span>
+                        {% else %}<span class="text-danger fw-bold">DENIED</span>{% endif %}
+                    </dd>
+                    <dt class="col-sm-4">Reason</dt><dd class="col-sm-8">{{ scan.final_policy_reason or "-" }}</dd>
+                    {% if scan.error_message %}
+                    <dt class="col-sm-4">Error message</dt><dd class="col-sm-8 text-danger">{{ scan.error_message }}</dd>
+                    {% endif %}
+                </dl>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-3">
+            <div class="card-header">Pipeline sub-status</div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-4">Transfer</dt><dd class="col-sm-8">{{ scan.transfer_status }}</dd>
+                    <dt class="col-sm-4">Scan</dt><dd class="col-sm-8">{{ scan.scan_status_detail }}</dd>
+                    <dt class="col-sm-4">Cleanup</dt><dd class="col-sm-8">{{ scan.cleanup_status }}</dd>
+                    <dt class="col-sm-4">Transfer mode</dt><dd class="col-sm-8">{{ scan.transfer_mode }}</dd>
+                    <dt class="col-sm-4">Staging path</dt><dd class="col-sm-8 font-monospace small">{{ scan.staging_path or "-" }}</dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-5">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header">Request</div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-4">Scan ID</dt><dd class="col-sm-8 font-monospace small">{{ scan.id }}</dd>
+                    <dt class="col-sm-4">Request ID</dt><dd class="col-sm-8 font-monospace small">{{ scan.request_id }}</dd>
+                    <dt class="col-sm-4">Created by</dt><dd class="col-sm-8">{{ scan.created_by }}</dd>
+                </dl>
+            </div>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-header">Timeline</div>
+            <div class="card-body">
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item">
+                        <strong>RECEIVED</strong>
+                        <div class="text-muted small">{{ scan.created_at.strftime('%Y-%m-%d %H:%M:%S') if scan.created_at else '' }}</div>
+                    </li>
+                    <li class="list-group-item">
+                        <strong>VALIDATING &rarr; TRANSFERRING &rarr; SCANNING</strong>
+                        <div class="text-muted small">
+                            {% if scan.started_at %}started {{ scan.started_at.strftime('%Y-%m-%d %H:%M:%S') }}{% else %}not started yet{% endif %}
+                        </div>
+                    </li>
+                    <li class="list-group-item">
+                        <strong class="{% if scan.status == 'CLEAN' %}text-success{% elif scan.status in ('INFECTED','ERROR','CLEANUP_FAILED') %}text-danger{% endif %}">
+                            {{ scan.status }}
+                        </strong>
+                        <div class="text-muted small">
+                            {% if scan.completed_at %}completed {{ scan.completed_at.strftime('%Y-%m-%d %H:%M:%S') }}{% else %}in progress{% endif %}
+                        </div>
+                    </li>
+                    <li class="list-group-item">
+                        <strong>CLEANUP</strong>
+                        <div class="text-muted small">{{ scan.cleanup_status }}</div>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

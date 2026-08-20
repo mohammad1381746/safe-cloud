@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Upload Scanner{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h3 class="mb-0">Dashboard</h3>
+    <a href="/upload" class="btn btn-primary btn-sm">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" class="me-1"><path d="M12 3v12m0-12 4 4m-4-4-4 4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Upload file
+    </a>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-md-2">
+        <div class="card shadow-sm stat-tile" style="--stat-color: var(--accent)"><div class="card-body">
+            <div class="stat-label">Total Scans</div>
+            <div class="stat-value">{{ "{:,}".format(stats.total) }}</div>
+        </div></div>
+    </div>
+    <div class="col-md-2">
+        <div class="card shadow-sm stat-tile" style="--stat-color: var(--bs-success)"><div class="card-body">
+            <div class="stat-label">Clean</div>
+            <div class="stat-value text-success">{{ "{:,}".format(stats.clean) }}</div>
+        </div></div>
+    </div>
+    <div class="col-md-2">
+        <div class="card shadow-sm stat-tile" style="--stat-color: var(--bs-danger)"><div class="card-body">
+            <div class="stat-label">Infected</div>
+            <div class="stat-value text-danger">{{ "{:,}".format(stats.infected) }}</div>
+        </div></div>
+    </div>
+    <div class="col-md-2">
+        <div class="card shadow-sm stat-tile" style="--stat-color: var(--bs-warning)"><div class="card-body">
+            <div class="stat-label">Errors</div>
+            <div class="stat-value text-warning-emphasis">{{ "{:,}".format(stats.errors) }}</div>
+        </div></div>
+    </div>
+    <div class="col-md-2">
+        <div class="card shadow-sm stat-tile" style="--stat-color: var(--bs-warning)"><div class="card-body">
+            <div class="stat-label">Encrypted</div>
+            <div class="stat-value text-warning-emphasis">{{ "{:,}".format(stats.encrypted) }}</div>
+        </div></div>
+    </div>
+    <div class="col-md-2">
+        <div class="card shadow-sm stat-tile" style="--stat-color: var(--bs-info)"><div class="card-body">
+            <div class="stat-label">Scanning now</div>
+            <div class="stat-value text-info-emphasis">{{ "{:,}".format(stats.scanning) }}</div>
+        </div></div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card shadow-sm stat-tile" style="--stat-color: var(--bs-secondary-color, #999)"><div class="card-body">
+            <div class="stat-label">Waiting</div>
+            <div class="stat-value" style="font-size:1.3rem">{{ "{:,}".format(stats.waiting) }}</div>
+        </div></div>
+    </div>
+    <div class="col-md-3">
+        <div class="card shadow-sm stat-tile" style="--stat-color: var(--bs-secondary-color, #999)"><div class="card-body">
+            <div class="stat-label">Uploaded today</div>
+            <div class="stat-value" style="font-size:1.3rem">{{ "{:,}".format(stats.uploaded_today) }}</div>
+        </div></div>
+    </div>
+    <div class="col-md-3">
+        <div class="card shadow-sm stat-tile" style="--stat-color: var(--bs-secondary-color, #999)"><div class="card-body">
+            <div class="stat-label">Scanned today</div>
+            <div class="stat-value" style="font-size:1.3rem">{{ "{:,}".format(stats.scanned_today) }}</div>
+        </div></div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-7">
+        <div class="card shadow-sm h-100">
+            <div class="card-header">Scans over time (14 days)</div>
+            <div class="card-body">
+                {% if scans_over_time %}
+                {% set max_count = (scans_over_time | max(attribute='total')).total %}
+                <div class="d-flex align-items-end" style="height:130px; gap:4px;">
+                    {% for d in scans_over_time %}
+                    <div class="d-flex flex-column align-items-center justify-content-end" style="flex:1; height:100%">
+                        <div class="bg-danger rounded-top" style="width:100%; height:{{ ((d.infected / max_count) * 110) | round(0) }}px" title="{{ d.day }}: {{ d.infected }} infected"></div>
+                        <div class="bg-success" style="width:100%; height:{{ ((d.clean / max_count) * 110) | round(0) }}px" title="{{ d.day }}: {{ d.clean }} clean"></div>
+                        <div class="small text-muted mt-1" style="font-size:0.65rem">{{ d.day.strftime('%m/%d') }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="small text-muted mt-2"><span class="badge text-bg-success">&nbsp;</span> clean &nbsp; <span class="badge text-bg-danger">&nbsp;</span> infected</div>
+                {% else %}
+                <p class="text-muted mb-0">No data yet</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-5">
+        <div class="card shadow-sm h-100">
+            <div class="card-header">Top threats</div>
+            <div class="card-body">
+                <table class="table table-sm mb-0">
+                    <tbody>
+                    {% for t in top_threats %}
+                    <tr><td>{{ t.threat }}</td><td class="text-end">{{ t.total }}</td></tr>
+                    {% else %}
+                    <tr><td class="text-muted">No threats detected</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header">Top users</div>
+            <div class="card-body">
+                <table class="table table-sm mb-0">
+                    <thead><tr><th>User</th><th class="text-end">Total</th><th class="text-end">Clean</th><th class="text-end">Infected</th></tr></thead>
+                    <tbody>
+                    {% for u in top_users %}
+                    <tr><td>{{ u.username }}</td><td class="text-end">{{ u.total }}</td><td class="text-end text-success">{{ u.clean }}</td><td class="text-end text-danger">{{ u.infected }}</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header">Scans by source</div>
+            <div class="card-body">
+                <table class="table table-sm mb-0">
+                    <tbody>
+                    {% for s in scans_by_source %}
+                    <tr><td>{{ s.source }}</td><td class="text-end">{{ s.total }}</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header">Scans by antivirus</div>
+            <div class="card-body">
+                <table class="table table-sm mb-0">
+                    <tbody>
+                    {% for s in scans_by_scanner %}
+                    <tr><td>{{ s.scanner_name }}</td><td class="text-end">{{ s.total }}</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        Recent scans
+        <a href="/scans" class="btn btn-outline-secondary btn-sm">View all scans</a>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+            <thead><tr><th>Date</th><th>Filename</th><th>Username</th><th>Source</th><th>Status</th></tr></thead>
+            <tbody>
+            {% for s in recent %}
+            <tr onclick="window.location='/scans/{{ s.id }}'">
+                <td>{{ s.created_at.strftime('%Y-%m-%d %H:%M') if s.created_at else '' }}</td>
+                <td>{{ s.filename }}</td>
+                <td>{{ s.username }}</td>
+                <td>{{ s.source_application }}</td>
+                <td><span class="badge rounded-pill text-bg-{{ s.status | status_badge }}">{{ s.status }}</span></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="text-muted text-center py-4">No scans yet</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

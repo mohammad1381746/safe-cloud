@@ -1,0 +1,183 @@
+# =============================================================================
+# Scanner Server stack (deploy this on scanner01, e.g. 192.168.150.100 -
+# NEVER on the Nextcloud server, which runs no containers from this
+# project at all beyond the Bash hook).
+#
+# `api` and `worker` share ONE built image (api/Dockerfile) and differ
+# only by `command:` - api serves HTTP and talks to PostgreSQL only;
+# worker polls PostgreSQL, runs Ansible, and is the ONLY service with
+# Docker access (the local Unix socket) and the SSH key that reaches the
+# Nextcloud host. The API container never touches Docker or SSH at all.
+# =============================================================================
+version: "3.8"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: nextcloud-upload-scanner-api:latest
+    container_name: nextcloud-scanner-api
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # The ONE deliberate exception to "api never touches local scan
+      # state": the universal upload API (POST /api/v1/files/upload)
+      # receives file bytes directly over HTTP and must stream them
+      # somewhere - PostgreSQL never stores file content (see README),
+      # so they land here, in the SAME staging volume `worker` reads
+      # from. api still has no Docker socket and no SSH key - it can
+      # write staged files but never scan or transfer them itself.
+      - staging_data:/var/lib/upload-scanner
+    networks:
+      - scanner_net
+    read_only: true
+    tmpfs:
+      - /tmp
+        #cap_drop:
+        #  - ALL
+        #security_opt:
+        #  - no-new-privileges:true
+    # NOTE: no Docker socket, no SSH key, no ansible-runs volume here -
+    # the API never talks to Docker or the Nextcloud host directly. It
+    # only creates/reads PostgreSQL rows and staged upload bytes;
+    # `worker` does everything else (Ansible, Docker, SSH).
+
+  worker:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: nextcloud-upload-scanner-api:latest
+    container_name: nextcloud-scanner-worker
+    command: ["python", "worker.py"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - scanner_runs:/var/lib/nextcloud-scanner/runs
+      - staging_data:/var/lib/upload-scanner
+      # SSH key used to reach the Nextcloud host over SFTP/SSH. Mount
+      # read-only; never bake keys into the image.
+      - ${SCANNER_SSH_DIR:-./ssh}:/home/scanner/.ssh
+      # The ONLY service in this stack with Docker access - needed to run
+      # the ephemeral ClamAV container locally on this (the Scanner)
+      # server. A compromised worker process has effective control of
+      # this host's Docker daemon; this is an inherent consequence of
+      # "Docker runs on the Scanner Server, driven by the worker" and is
+      # why `api` (the HTTP-facing, more exposed service) deliberately
+      # does NOT get this mount.
+      - /var/run/docker.sock:/var/run/docker.sock
+    # The docker.sock GID on the host varies by distro/install. Set
+    # DOCKER_GID in .env to `getent group docker | cut -d: -f3` on this
+    # host if the worker can't reach the socket (falls back to a common
+    # default otherwise).
+    #
+    # "10001" is scanner_container_gid (ansible/group_vars/scanner.yml) -
+    # the ClamAV/scanner container's own GID. scan_uploaded_file.yml's
+    # "Fix ownership/permissions on the staged file" task runs as this
+    # container's own `scanner` user (uid/gid 10002, become: false - see
+    # api/Dockerfile) and chgrp's staged files to GID 10001 so the
+    # ephemeral scan container can read them. An unprivileged process can
+    # only change a file's group to a group IT belongs to - without this
+    # supplementary group membership, that chgrp fails with EPERM (surfaced
+    # in the panel as the scan's error_message: "chgrp failed") for every
+    # scan, regardless of whether the file arrived via the legacy
+    # Nextcloud SSH-fetch flow or a direct upload - both share this same
+    # task. Fixed the same way DOCKER_GID already is: add it as a
+    # supplementary group at container-start time, no image rebuild
+    # required (a plain `docker compose up -d worker` picks this up).
+    group_add:
+      - "${DOCKER_GID:-999}"
+      - "10001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - scanner_net
+        #cap_drop:
+        #  - ALL
+        #security_opt:
+        #  - no-new-privileges:true
+
+  postgres:
+    build:
+      context: ./db
+      dockerfile: Dockerfile
+    image: nextcloud-upload-scanner-postgres:latest
+    container_name: nextcloud-scanner-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-scanner}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+      POSTGRES_DB: "${POSTGRES_DB:-scanner}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Migration files are baked into the image at build time
+      # (db/Dockerfile COPYs db/migrations/ -> /docker-entrypoint-initdb.d/)
+      # rather than bind-mounted here - a runtime bind mount of this
+      # directory proved unreliable on Windows/Docker Desktop (see
+      # CLAUDE.md's incident log). They still only run once, in filename
+      # order, against a FRESH (empty) data directory - on an existing
+      # database, apply new migrations by hand, see README "Database
+      # migrations". Editing a migration file requires
+      # `docker compose up -d --build postgres` to take effect, same as
+      # editing anything under ansible/ requires rebuilding `api`.
+    networks:
+      - scanner_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scanner}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Deliberately NOT cap_drop:/security_opt: hardened like the
+    # api/worker/scanner containers. The official postgres image's
+    # entrypoint re-execs itself as the unprivileged `postgres` user
+    # before touching /docker-entrypoint-initdb.d at all, and dropping
+    # capabilities on top of that isn't what was actually breaking
+    # startup here (see CLAUDE.md incident log) - this container also
+    # never executes attacker-controlled bytes the way ClamAV/scanner
+    # containers do, so it doesn't need the same threat-model treatment.
+    # Not exposed on any host port - only reachable from api/worker on
+    # scanner_net. If you need external access (e.g. an ad-hoc psql from
+    # your workstation), add a `ports:` mapping bound to 127.0.0.1 only.
+
+  freshclam-updater:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.freshclam
+    image: nextcloud-scanner-freshclam:latest
+    container_name: nextcloud-scanner-freshclam
+    restart: unless-stopped
+    environment:
+      FRESHCLAM_INTERVAL_SECONDS: "14400"
+    volumes:
+      - clamav_db:/var/lib/clamav
+    networks:
+      - scanner_net
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  scanner_net:
+    driver: bridge
+
+volumes:
+  clamav_db:
+    name: clamav_db
+  scanner_runs:
+    name: scanner_runs
+  staging_data:
+    name: staging_data
+  postgres_data:
+    name: postgres_data

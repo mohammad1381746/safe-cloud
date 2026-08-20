@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}API Clients - Upload Scanner{% endblock %}
+{% block content %}
+<a href="/settings" class="btn btn-outline-secondary btn-sm mb-3">&larr; Back to settings</a>
+<h3 class="mb-4">API Clients</h3>
+
+{% if new_key %}
+<div class="alert alert-warning">
+    <strong>Copy this API key now - it will not be shown again:</strong>
+    <pre class="mb-0 mt-2 p-2 bg-body-tertiary border rounded user-select-all">{{ new_key }}</pre>
+</div>
+{% endif %}
+
+<div class="row">
+    <div class="col-md-7">
+        <div class="card shadow-sm">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead>
+                    <tr><th>Name</th><th>Key</th><th>Profile</th><th>Permissions</th><th>Enabled</th><th>Last used</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                    {% for c in clients %}
+                    <tr>
+                        <td>{{ c.name }}<div class="text-muted small">{{ c.owner }}</div></td>
+                        <td class="font-monospace small">{{ c.key_prefix }}...</td>
+                        <td>{{ c.scanner_profile_id and "pinned" or "any" }}</td>
+                        <td class="small">{{ c.permissions | join(", ") }}</td>
+                        <td>
+                            {% if c.enabled %}<span class="badge rounded-pill text-bg-success">enabled</span>
+                            {% else %}<span class="badge rounded-pill text-bg-secondary">revoked</span>{% endif %}
+                        </td>
+                        <td class="small">{{ c.last_used_at.strftime('%Y-%m-%d %H:%M') if c.last_used_at else "never" }}</td>
+                        <td class="text-nowrap">
+                            <form method="post" action="/settings/api-clients/{{ c.id }}/rotate" class="d-inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button type="submit" class="btn btn-outline-secondary btn-sm" onclick="return confirm('Rotate this key? The old key stops working immediately.')">Rotate</button>
+                            </form>
+                            {% if c.enabled %}
+                            <form method="post" action="/settings/api-clients/{{ c.id }}/revoke" class="d-inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('Revoke this API key?')">Revoke</button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="7" class="text-muted text-center py-4">No API clients yet</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-5">
+        <div class="card shadow-sm">
+            <div class="card-header">New API client</div>
+            <div class="card-body">
+                <form method="post" action="/settings/api-clients/new">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="mb-2">
+                        <label class="form-label">Name</label>
+                        <input class="form-control" name="name" required>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Description</label>
+                        <input class="form-control" name="description">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Owner</label>
+                        <input class="form-control" name="owner">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Scanner profile (leave blank to let the client choose, or pin one)</label>
+                        <select class="form-select" name="scanner_profile_id">
+                            <option value="">(none - use default / client-selectable)</option>
+                            {% for p in profiles %}
+                            <option value="{{ p.id }}">{{ p.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label d-block">Permissions</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="permissions" value="scan.upload" id="p1" checked>
+                            <label class="form-check-label" for="p1">scan.upload</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="permissions" value="scan.read" id="p2" checked>
+                            <label class="form-check-label" for="p2">scan.read (own scans only)</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="permissions" value="scan.read_all" id="p3">
+                            <label class="form-check-label" for="p3">scan.read_all (any client's scans)</label>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Create API client</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,136 @@
+---
+# fetch_from_nextcloud.yml
+#
+# Validates the source file ON the Nextcloud host and pulls a copy to the
+# Scanner Server's staging directory over SFTP (ansible.builtin.fetch,
+# via the SSH connection - fetch always writes its `dest` on the CONTROL
+# NODE regardless of delegate_to, and the control node here IS the
+# Scanner Server, since the worker process that invokes ansible-playbook
+# runs there).
+#
+# This is a STANDALONE, fetch-ONLY playbook - deliberately split apart
+# from scanning (see scan_uploaded_file.yml) so api/scanner.py can run
+# encrypted-file detection (Python, on the now-locally-staged copy)
+# BETWEEN the transfer and the scan, for both the Nextcloud path-
+# reference flow (this file) and the universal-upload direct flow (which
+# skips this file entirely - the bytes are already staged by
+# api/routes_upload.py). One playbook, two callers, no duplicated
+# validate/scan logic between them.
+#
+# Invoked by api/ansible_runner.py as:
+#   ansible-playbook -i inventory.ini fetch_from_nextcloud.yml \
+#       --limit <nextcloud_inventory_host> -e @extra_vars.json
+#
+# extra_vars.json supplies: request_id, nextcloud_inventory_host,
+# file_path, expected_sha256, expected_size, max_file_size, allowed_root,
+# staging_dir, result_file.
+
+- name: Validate and fetch the source file from the Nextcloud host
+  hosts: "{{ nextcloud_inventory_host }}"
+  gather_facts: false
+  become: false
+
+  vars:
+    scanner_host: "{{ groups['scanner'][0] }}"
+    input_dir: "{{ staging_dir }}/input"
+    final_result: {}
+
+  tasks:
+    - name: Verify the Nextcloud host is reachable
+      ansible.builtin.ping:
+
+    - block:
+        - name: Resolve the canonical (real, symlink-free) path of the requested file
+          ansible.builtin.command:
+            argv: ["realpath", "-e", "{{ file_path }}"]
+          register: realpath_result
+          changed_when: false
+
+        - name: Record the canonical path and filename
+          ansible.builtin.set_fact:
+            canonical_path: "{{ realpath_result.stdout | trim }}"
+            source_filename: "{{ (realpath_result.stdout | trim) | basename }}"
+
+        - name: Build a regex matching the allowed root (and its subpaths)
+          ansible.builtin.set_fact:
+            _allowed_root_regex: "^{{ allowed_root | regex_escape }}(/|$)"
+
+        - name: Enforce that the canonical path stays under the allowed root (symlink-attack protection)
+          ansible.builtin.assert:
+            that:
+              - canonical_path is match(_allowed_root_regex)
+            fail_msg: "Canonical path {{ canonical_path }} resolved outside the allowed root for this host"
+
+        - name: Stat the canonical file (follow symlinks, compute sha256 independently of the client)
+          ansible.builtin.stat:
+            path: "{{ canonical_path }}"
+            get_checksum: true
+            checksum_algorithm: sha256
+            follow: true
+          register: file_stat
+
+        - name: Fail if the file does not exist
+          ansible.builtin.assert:
+            that: [file_stat.stat.exists]
+            fail_msg: "File does not exist on the Nextcloud host: {{ canonical_path }}"
+
+        - name: Fail if the path is not a regular file
+          ansible.builtin.assert:
+            that: [file_stat.stat.isreg]
+            fail_msg: "Path is not a regular file: {{ canonical_path }}"
+
+        - name: Fail if the file exceeds the configured maximum size
+          ansible.builtin.assert:
+            that:
+              - file_stat.stat.size <= (max_file_size | int)
+            fail_msg: "File size {{ file_stat.stat.size }} exceeds max_file_size {{ max_file_size }}"
+
+        - name: Fail if the Nextcloud-side hash does not match what the client claimed
+          ansible.builtin.assert:
+            that:
+              - file_stat.stat.checksum == expected_sha256
+            fail_msg: >-
+              SHA256 on the Nextcloud host ({{ file_stat.stat.checksum }}) does not match the
+              client-supplied sha256 ({{ expected_sha256 }})
+
+        - name: Ensure the staging input directory exists on the Scanner Server
+          ansible.builtin.file:
+            path: "{{ input_dir }}"
+            state: directory
+            mode: "0750"
+            owner: "{{ hostvars[scanner_host].scanner_service_user }}"
+            group: "{{ hostvars[scanner_host].scanner_container_gid }}"
+          delegate_to: "{{ scanner_host }}"
+
+        - name: Fetch the file from the Nextcloud host to the Scanner Server staging directory (SFTP)
+          ansible.builtin.fetch:
+            src: "{{ canonical_path }}"
+            dest: "{{ input_dir }}/{{ source_filename }}"
+            flat: true
+
+        - name: Build the final machine-readable result
+          ansible.builtin.set_fact:
+            final_result:
+              stage: "completed"
+              actual_sha256: "{{ file_stat.stat.checksum }}"
+              actual_size: "{{ file_stat.stat.size }}"
+              filename: "{{ source_filename }}"
+              staging_dir: "{{ staging_dir }}"
+              request_id: "{{ request_id }}"
+
+      rescue:
+        - name: Record failure as the final result (fail closed)
+          ansible.builtin.set_fact:
+            final_result:
+              stage: "precondition_failed"
+              status: "ERROR"
+              message: "{{ ansible_failed_result.msg | default('Validation or transfer failed on the Nextcloud host') }}"
+              staging_dir: "{{ staging_dir }}"
+              request_id: "{{ request_id }}"
+
+      always:
+        - name: Write the final result back to the control node
+          ansible.builtin.copy:
+            content: "{{ final_result | to_nice_json }}"
+            dest: "{{ result_file }}"
+          delegate_to: localhost

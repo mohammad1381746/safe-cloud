@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if profile and profile.id else "New" }} Profile - Upload Scanner{% endblock %}
+{% block content %}
+<a href="/profiles" class="btn btn-outline-secondary btn-sm mb-3">&larr; Back to profiles</a>
+<h3 class="mb-4">{{ "Edit profile" if profile and profile.id else "New profile" }}</h3>
+
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+<form method="post" class="card shadow-sm">
+    <div class="card-body">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        <div class="row g-3 mb-3">
+            <div class="col-md-6">
+                <label class="form-label">Name</label>
+                <input class="form-control" name="name" value="{{ profile.name if profile else '' }}" required>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Slug</label>
+                <input class="form-control" name="slug" value="{{ profile.slug if profile else '' }}"
+                       {% if profile and profile.id %}readonly{% endif %} required>
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Description</label>
+            <input class="form-control" name="description" value="{{ profile.description if profile else '' }}">
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Aggregation policy</label>
+            <select class="form-select" name="aggregation_policy">
+                {% for p in policies %}
+                <option value="{{ p }}" {% if profile and profile.aggregation_policy == p or (not profile and p == 'ALL_MUST_PASS') %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+            </select>
+            <div class="form-text">
+                ALL_MUST_PASS: any error or detection blocks the file. ANY_DETECTION: only an actual
+                detection blocks - a failed scanner is tolerated if another one reports clean.
+                FIRST_DETECTION / FIRST_SUCCESS: decided by the first scanner (in the order below) that
+                detects / that completes successfully.
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Scanners (checked = included; order number controls evaluation order)</label>
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead><tr><th></th><th>Scanner</th><th style="width:8rem">Order</th></tr></thead>
+                    <tbody>
+                    {% for s in all_scanners %}
+                    <tr>
+                        <td>
+                            <input type="checkbox" class="form-check-input" name="scanner_ids" value="{{ s.id }}"
+                                   {% if s.id in selected_scanner_ids %}checked{% endif %}>
+                        </td>
+                        <td>{{ s.name }} {% if not s.enabled %}<span class="badge text-bg-secondary">disabled</span>{% endif %}</td>
+                        <td><input type="number" class="form-control form-control-sm" name="order_{{ s.id }}" value="{{ loop.index0 }}"></td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="3" class="text-muted">No scanners registered yet - <a href="/scanners/new">create one first</a>.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="form-check form-switch mb-2">
+            <input class="form-check-input" type="checkbox" name="enabled" id="enabled"
+                   {% if not profile or profile.enabled %}checked{% endif %}>
+            <label class="form-check-label" for="enabled">Enabled</label>
+        </div>
+        <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" name="is_default" id="is_default"
+                   {% if profile and profile.is_default %}checked{% endif %}>
+            <label class="form-check-label" for="is_default">Default profile (used when an API client/scan has none assigned)</label>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save profile</button>
+        {% if profile and profile.id %}
+        <button type="submit" form="delete-form-{{ profile.id }}" class="btn btn-outline-danger float-end"
+                onclick="return confirm('Delete this profile?')">Delete</button>
+        {% endif %}
+    </div>
+</form>
+
+{% if profile and profile.id %}
+<form id="delete-form-{{ profile.id }}" method="post" action="/profiles/{{ profile.id }}/delete" class="d-none">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+</form>
+{% endif %}
+{% endblock %}

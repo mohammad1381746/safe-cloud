@@ -1,0 +1,124 @@
+---
+# delete_infected_source.yml
+#
+# Deletes the ORIGINAL source file on the Nextcloud host - ONLY called by
+# api/scanner.py after ClamAV has definitively returned INFECTED and that
+# result has already been persisted to PostgreSQL with its sha256.
+#
+# TOCTOU protection: this playbook re-resolves the canonical path and
+# re-computes the source file's sha256 ON THE NEXTCLOUD HOST, independent
+# of anything computed earlier in scan_pipeline.yml, and refuses to
+# delete unless that CURRENT hash exactly matches the hash that was
+# actually scanned and found infected (`expected_sha256`, passed in by
+# scanner.py as the scan's `actual_sha256` - never the client's original
+# claim). If the file changed on disk between scanning and this step
+# (e.g. re-uploaded, or a different file coincidentally landed at the
+# same path), the hashes will not match and NOTHING is deleted - this
+# entire playbook is fail-closed by construction: every path that isn't
+# an exact, freshly-verified hash match ends in `deletion_status: ABORTED`
+# and `stage: precondition_failed`, never `DELETED`.
+#
+# Invoked by api/ansible_runner.py as:
+#   ansible-playbook -i inventory.ini delete_infected_source.yml \
+#       --limit <nextcloud_inventory_host> -e @extra_vars.json
+#
+# extra_vars.json supplies: request_id, file_path, expected_sha256
+# (the SCANNED hash, not the client's original claim), allowed_root,
+# result_file.
+
+- name: Re-verify and delete a confirmed-infected source file on the Nextcloud host
+  hosts: "{{ nextcloud_inventory_host }}"
+  gather_facts: false
+  become: false
+
+  vars:
+    final_result: {}
+
+  tasks:
+    - name: Verify the Nextcloud host is reachable
+      ansible.builtin.ping:
+
+    - block:
+        - name: Resolve the canonical path of the source file, if it still exists
+          ansible.builtin.command:
+            argv: ["realpath", "-e", "{{ file_path }}"]
+          register: realpath_result
+          failed_when: false
+          changed_when: false
+
+        - block:
+            - name: Record that the source file was already gone
+              ansible.builtin.set_fact:
+                final_result:
+                  stage: "completed"
+                  deletion_status: "ALREADY_GONE"
+                  message: "Source file no longer exists on the Nextcloud host - nothing to delete"
+                  request_id: "{{ request_id }}"
+          when: realpath_result.rc != 0
+
+        - block:
+            - name: Record the canonical path
+              ansible.builtin.set_fact:
+                canonical_path: "{{ realpath_result.stdout | trim }}"
+
+            - name: Build a regex matching the allowed root (and its subpaths)
+              ansible.builtin.set_fact:
+                _allowed_root_regex: "^{{ allowed_root | regex_escape }}(/|$)"
+
+            - name: Enforce that the canonical path stays under the allowed root
+              ansible.builtin.assert:
+                that:
+                  - canonical_path is match(_allowed_root_regex)
+                fail_msg: >-
+                  Canonical path {{ canonical_path }} resolved outside the allowed root for this
+                  host - refusing to delete
+
+            - name: Re-stat the source file and compute its CURRENT sha256 (TOCTOU re-check)
+              ansible.builtin.stat:
+                path: "{{ canonical_path }}"
+                get_checksum: true
+                checksum_algorithm: sha256
+                follow: true
+              register: current_stat
+
+            - name: Fail if the current hash does not match the hash that was actually scanned
+              ansible.builtin.assert:
+                that:
+                  - current_stat.stat.exists
+                  - current_stat.stat.checksum == expected_sha256
+                fail_msg: >-
+                  Current sha256 on the Nextcloud host ({{ current_stat.stat.checksum | default('MISSING') }})
+                  does not match the sha256 that was scanned and found INFECTED ({{ expected_sha256 }}) -
+                  the file may have changed since it was scanned. Refusing to delete a file that was
+                  never confirmed malicious.
+
+            - name: Delete the confirmed-infected source file
+              ansible.builtin.file:
+                path: "{{ canonical_path }}"
+                state: absent
+
+            - name: Record successful deletion
+              ansible.builtin.set_fact:
+                final_result:
+                  stage: "completed"
+                  deletion_status: "DELETED"
+                  message: "Source file deleted after independent hash re-verification"
+                  deleted_path: "{{ canonical_path }}"
+                  request_id: "{{ request_id }}"
+          when: realpath_result.rc == 0
+
+      rescue:
+        - name: Record an aborted deletion - DO NOT delete anything (fail closed)
+          ansible.builtin.set_fact:
+            final_result:
+              stage: "precondition_failed"
+              deletion_status: "ABORTED"
+              message: "{{ ansible_failed_result.msg | default('Deletion aborted - could not safely verify the source file') }}"
+              request_id: "{{ request_id }}"
+
+      always:
+        - name: Write the final deletion result back to the control node
+          ansible.builtin.copy:
+            content: "{{ final_result | to_nice_json }}"
+            dest: "{{ result_file }}"
+          delegate_to: localhost

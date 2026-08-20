@@ -1,0 +1,44 @@
+[Unit]
+Description=Nextcloud Upload Scanner Worker (Ansible + Docker + SSH to the Nextcloud host)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=scanner
+Group=scanner
+# `scanner` must also be a member of the host's `docker` group so it can
+# use /var/run/docker.sock - this is the ONLY process in the whole
+# deployment (bare metal or Docker) that needs Docker access.
+SupplementaryGroups=docker
+WorkingDirectory=/opt/nextcloud-upload-scanner/api
+EnvironmentFile=/opt/nextcloud-upload-scanner/.env
+ExecStart=/opt/nextcloud-upload-scanner/venv/bin/python worker.py
+Restart=on-failure
+RestartSec=5
+
+# --- hardening ---
+# Unlike scanner-api.service, this process legitimately needs local
+# filesystem write access (Ansible's local scratch dirs + the staging
+# directory it transfers Nextcloud files into) and the SSH key used to
+# reach the Nextcloud host - keep both under ReadWritePaths/ReadOnlyPaths
+# rather than relaxing ProtectHome, so nothing under the real /home is
+# ever exposed.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/nextcloud-scanner /var/lib/upload-scanner
+ReadOnlyPaths=/opt/nextcloud-upload-scanner/ssh
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

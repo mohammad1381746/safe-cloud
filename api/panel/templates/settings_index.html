@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Settings - Upload Scanner{% endblock %}
+{% block content %}
+<h3 class="mb-4">Settings</h3>
+<div class="list-group" style="max-width: 32rem">
+    <a href="/settings/encrypted-files" class="list-group-item list-group-item-action">
+        <strong>Encrypted Files</strong>
+        <div class="text-muted small">Policy for password-protected/encrypted files that can't be scanned</div>
+    </a>
+    <a href="/settings/api-clients" class="list-group-item list-group-item-action">
+        <strong>API Clients</strong>
+        <div class="text-muted small">Manage API keys and their permissions/scanner profile</div>
+    </a>
+    <a href="/settings/security" class="list-group-item list-group-item-action">
+        <strong>Security</strong>
+        <div class="text-muted small">Rate limits, retention, file size/type policies</div>
+    </a>
+    <a href="/scanners" class="list-group-item list-group-item-action">
+        <strong>Scanners</strong>
+        <div class="text-muted small">Register and configure antivirus/scanner engines</div>
+    </a>
+    <a href="/profiles" class="list-group-item list-group-item-action">
+        <strong>Scanner Profiles</strong>
+        <div class="text-muted small">Group scanners and choose how their results combine</div>
+    </a>
+    <a href="/audit" class="list-group-item list-group-item-action">
+        <strong>Audit Log</strong>
+        <div class="text-muted small">Every administrative and security-relevant action</div>
+    </a>
+</div>
+{% endblock %}

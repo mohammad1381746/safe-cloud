@@ -1,0 +1,19 @@
+<tbody id="scans-tbody">
+{% for s in scans %}
+<tr onclick="window.location='/scans/{{ s.id }}'" style="cursor:pointer">
+    <td class="font-monospace small">{{ s.id | string | truncate(8, True, '') }}</td>
+    <td>{{ s.created_at.strftime('%Y-%m-%d %H:%M:%S') if s.created_at else '' }}</td>
+    <td>{{ s.filename }}</td>
+    <td>{{ s.username }}</td>
+    <td>{{ s.source_application }}{% if s.nextcloud_host %} <span class="text-muted small">({{ s.nextcloud_host }})</span>{% endif %}</td>
+    <td>{{ "{:,}".format(s.original_size) }} B</td>
+    <td class="font-monospace small">{{ s.sha256 | truncate(12, True, '') }}</td>
+    <td><span class="badge rounded-pill text-bg-{{ s.status | status_badge }}">{{ s.status }}</span></td>
+    <td>{{ s.threat or "" }}</td>
+    <td>{{ s.duration_ms | default("") }}{% if s.duration_ms %} ms{% endif %}</td>
+    <td>{{ s.completed_at.strftime('%Y-%m-%d %H:%M:%S') if s.completed_at else '' }}</td>
+</tr>
+{% else %}
+<tr><td colspan="11" class="text-muted text-center py-4">No matching scans</td></tr>
+{% endfor %}
+</tbody>
