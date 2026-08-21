@@ -249,13 +249,24 @@ CREATE INDEX IF NOT EXISTS idx_scans_needs_review ON scans (needs_review) WHERE 
 -- with scanner_profile_id = NULL, which api/policy.py treats as "the
 -- default profile applied implicitly").
 -- -----------------------------------------------------------------------------
-INSERT INTO scanners (name, slug, description, docker_image, scan_command, result_parser, timeout_seconds)
+INSERT INTO scanners (name, slug, description, docker_image, scan_command, result_parser, timeout_seconds, memory_limit_mb)
 VALUES (
     'ClamAV', 'clamav', 'ClamAV malware scanner (existing docker/Dockerfile image)',
     'nextcloud-scanner-clamav:latest',
     '["/usr/local/bin/scan.sh"]'::jsonb,
     'clamav_wrapper_json',
-    120
+    120,
+    -- clamscan loads its ENTIRE signature database (main.cvd + daily.cvd
+    -- + bytecode.cvd) into memory before scanning anything - commonly
+    -- 300-800+ MB depending on how current the database is, and this
+    -- only grows over time as ClamAV adds signatures. The column
+    -- DEFAULT (512) is NOT enough - clamscan gets OOM-killed
+    -- (community.docker enforces this as a hard memory cgroup limit;
+    -- the scanner container's own scan.sh sees this as the shell's
+    -- "Killed" message with no other output, reported as scan status
+    -- ERROR). 2048 is a considerably safer floor for a modern ClamAV
+    -- database; raise further via the panel (/scanners) if it recurs.
+    2048
 ) ON CONFLICT (slug) DO NOTHING;
 
 INSERT INTO scanner_profiles (name, slug, description, aggregation_policy, is_default)

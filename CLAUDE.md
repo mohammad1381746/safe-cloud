@@ -1460,3 +1460,103 @@ worry about missing this in the future.
   exact area is enough that a fourth, different one showing up would not
   be shocking, and guessing again without fresh evidence would repeat
   the exact mistake this entry is documenting the fix for.
+
+### Incident: `clamscan` reports `ERROR` with `message: "Killed\n"` and nothing else
+
+A genuinely different bug class from the permission-chain above - the
+previous three fixes all held (no permission/mount errors this time);
+this is `clamscan` itself dying mid-scan. "Killed" with no other
+`clamscan` output is the shell's own message when a foreground process
+is terminated by a signal (here, SIGKILL) - consistent with an OOM kill,
+not a crash in the usual sense. `docker/scan.sh` correctly captures this
+into the ERROR result's `message` regardless of cause, which is exactly
+why the improved logging from an earlier entry in this log (surfacing
+`scanner_results` directly in `scan_completed`) mattered here - this was
+diagnosed straight from the worker's own stdout, no `psql`/panel
+round-trip needed this time.
+
+- **Cause**: `clamscan` loads its ENTIRE virus signature database
+  (main.cvd + daily.cvd + bytecode.cvd) into memory before scanning
+  anything, commonly 300-800+ MB depending on how current the database
+  is (and this only grows over time). The `scanners` table's
+  `memory_limit_mb` DEFAULT is 512, and the original seed INSERT in
+  `db/migrations/0002_platform.sql` never overrode it for ClamAV
+  specifically - `community.docker.docker_container`'s `memory:` param
+  enforces this as a hard cgroup limit, so `clamscan` gets OOM-killed
+  before it can even start scanning the actual target file.
+- **Fix**: `db/migrations/0002_platform.sql`'s ClamAV seed INSERT now
+  explicitly sets `memory_limit_mb = 2048`. This only affects FRESH
+  installs (migrations don't retroactively touch an existing DB row) -
+  for the user's own already-seeded row, the fix is a live DB value
+  change, not a rebuild: either edit via the panel (`/scanners` -> edit
+  ClamAV -> Memory limit (MB) -> save, takes effect on the very next
+  scan, no restart needed) or
+  `UPDATE scanners SET memory_limit_mb = 2048 WHERE slug = 'clamav';`
+  directly. Whichever a future session reaches for, note this is the
+  FIRST fix in this whole multi-incident debugging session that needs
+  NO `docker build`/`docker compose --build` at all - worth remembering
+  when triaging future scanner-config issues (docker_image/scan_command/
+  timeout/cpu/memory are all live DB values, not baked into any image).
+- If 2048 MB still isn't enough (e.g. a much larger daily.cvd in the
+  future, or a heavier third-party scanner an admin registers later),
+  raise it further the same way - there's no hardcoded ceiling in this
+  project's own code, only whatever `MAX_CONCURRENT_SCANS` x each
+  scanner's own `memory_limit_mb` the underlying Docker host can actually
+  provide concurrently.
+
+### Incident: `nextcloud-upload-scanner.conf`/log file permissions as documented make the script unusable by Nextcloud itself
+
+Not a code bug - a documentation/install-instructions bug in THIS
+project's own README, present since the very first single-server build,
+that would affect EVERY user who followed section 4.1 verbatim, not just
+this one deployment. Root-caused with concrete evidence
+(`sudo -u www-data /usr/local/bin/nextcloud-upload-scanner.sh ...`
+producing `Permission denied` on both the config and log files) rather
+than assumed.
+
+- **Cause**: README 4.1 (and `config/nextcloud-upload-scanner.conf.example`'s
+  own header comment) instructed `chown root:root` + `chmod 0600` for
+  the config file and `chown root:root` + `chmod 640` for the log file.
+  Both are unreadable/unwritable by anyone but root. But this script is
+  never invoked by root or by an admin - it's invoked by Nextcloud's OWN
+  PHP process, via the `workflow_script` Flow app, running as whatever
+  user the web server/PHP-FPM pool runs as (commonly `www-data` on
+  Debian/Ubuntu - confirmed to be exactly this user in this case). That
+  process could NEVER read `SCANNER_API_TOKEN` from a root-600 file, so
+  every Flow-triggered run failed immediately at config load with
+  `fail_error("SCANNER_API_TOKEN is not set...")` - and since the LOG
+  FILE was equally inaccessible to that same user, `log()`'s own
+  `>> "$LOG_FILE" 2>/dev/null || true` swallowed that failure completely
+  silently. Net effect: automatic runs produce ZERO log entries, ever,
+  making this look like "the script never runs at all" (matching an
+  EARLIER, separate incident in this log about Docker-container
+  placement) even though here the actual cause was purely a file
+  permission mismatch between "who the docs said should own these
+  files" and "who actually needs to read/write them."
+- Historical log entries in the user's own log file (dated before this
+  session) DID show successful config reads and even a real API request
+  - almost certainly from a manual/root-privileged test run at some
+  earlier point, not from an actual Nextcloud Flow trigger; root bypasses
+  file permissions entirely, so a manual `sudo ./script.sh ...` test
+  would never have exposed this gap - only testing AS the exact runtime
+  user (`sudo -u www-data ...`, as done here) surfaces it. Worth
+  remembering for future "is this actually working end-to-end" checks -
+  a root-run manual test proves the SCRIPT's own logic works, not that
+  Nextcloud can actually invoke it.
+- **Fix**: README 4.1 now installs the config as
+  `root:$NC_PHP_USER 0640` (root owns/edits it, the web-server user's
+  GROUP membership grants read-only access - never write, even if that
+  process were later compromised) and the log as
+  `$NC_PHP_USER:$NC_PHP_USER 0640` (owned by the user actually writing
+  to it; root can always read/manage it regardless of these bits).
+  `config/nextcloud-upload-scanner.conf.example`'s header comment
+  updated to match, with the same reasoning inline. README now also
+  tells the reader to confirm their ACTUAL PHP-FPM/web-server user
+  first (`ps -eo user,comm | grep -E 'php-fpm|apache2|nginx'`) rather
+  than hardcoding `www-data` unconditionally, since that varies by
+  distro/setup (RHEL-family commonly uses `apache`, custom PHP-FPM pools
+  can use anything).
+- Pure file-permission/documentation fix - no rebuild, no code change.
+  Verify with `sudo -u <that-user> cat /etc/nextcloud-upload-scanner.conf > /dev/null`
+  actually succeeding before assuming this is resolved for a given
+  deployment.

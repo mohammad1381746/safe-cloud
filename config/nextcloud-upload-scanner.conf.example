@@ -1,10 +1,21 @@
 # /etc/nextcloud-upload-scanner.conf
 #
-# Install with:
-#   sudo install -o root -g root -m 0600 nextcloud-upload-scanner.conf.example /etc/nextcloud-upload-scanner.conf
+# Install with (see README section 4.1 for the full explanation):
+#   sudo install -o root -g www-data -m 0640 nextcloud-upload-scanner.conf.example /etc/nextcloud-upload-scanner.conf
 #
-# This file is sourced by scripts/nextcloud-upload-scanner.sh. It must never
-# be world- or group-readable because it holds the API bearer token.
+# The GROUP here matters: this file is read by Nextcloud's OWN PHP
+# process (via the workflow_script Flow app invoking
+# scripts/nextcloud-upload-scanner.sh), which runs as your web
+# server/PHP-FPM user - commonly www-data on Debian/Ubuntu, but check
+# yours (see README 4.1) and substitute it above if different. A
+# root:root 0600 file (readable only by root) is invisible to that
+# process entirely - every Flow-triggered run fails immediately with
+# "SCANNER_API_TOKEN is not set", and that failure won't even show up in
+# the log file if IT also isn't writable by that same user (see
+# nextcloud-upload-scanner.sh's own log() function). Root still owns
+# this file and is the only one who can WRITE to it (0640) - the
+# principle is "readable by the process that needs it, writable only by
+# an admin", not "world-readable".
 
 # Point this at the Scanner Server, not this (the Nextcloud) machine.
 SCANNER_API_URL="http://192.168.150.100:8000"

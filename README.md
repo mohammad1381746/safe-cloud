@@ -243,13 +243,32 @@ This machine needs **no containers from this project at all**.
 sudo install -o root -g root -m 0755 scripts/nextcloud-upload-scanner.sh \
     /usr/local/bin/nextcloud-upload-scanner.sh
 
-sudo install -o root -g root -m 0600 config/nextcloud-upload-scanner.conf.example \
+# IMPORTANT: this script is invoked by Nextcloud's OWN PHP process (via
+# the workflow_script Flow app), not by you or root - it runs as
+# whatever user your web server/PHP-FPM pool actually runs as (commonly
+# www-data on Debian/Ubuntu, apache on RHEL-family, or a custom pool
+# user). Find yours first if you're not sure:
+#   ps -eo user,comm | grep -E 'php-fpm|apache2|nginx' | sort -u
+NC_PHP_USER="www-data"   # <- change this if your system uses a different one
+
+sudo install -o root -g "$NC_PHP_USER" -m 0640 config/nextcloud-upload-scanner.conf.example \
     /etc/nextcloud-upload-scanner.conf
 sudo "${EDITOR:-nano}" /etc/nextcloud-upload-scanner.conf   # SCANNER_API_URL -> the Scanner Server
+# root owns/can edit it; $NC_PHP_USER's GROUP membership grants read-only
+# access (0640 = rw-r-----) - readable by the process that actually needs
+# it, but that process can never modify its own config even if
+# compromised. A plain `root:root 0600` (as earlier revisions of this
+# README had it) is unreadable by $NC_PHP_USER entirely - the script
+# would fail with "SCANNER_API_TOKEN is not set" on every single
+# Flow-triggered run, invisibly, since even the log-write failure that
+# would otherwise explain why gets silently swallowed (see the next step).
 
 sudo touch /var/log/nextcloud-upload-scanner.log
-sudo chown root:root /var/log/nextcloud-upload-scanner.log
+sudo chown "$NC_PHP_USER:$NC_PHP_USER" /var/log/nextcloud-upload-scanner.log
 sudo chmod 640 /var/log/nextcloud-upload-scanner.log
+# Owned by $NC_PHP_USER since that's the user actually writing to it on
+# every invocation - root can still read/manage it regardless of these
+# bits (root bypasses file permissions entirely).
 
 sudo apt-get install -y curl jq coreutils
 ```
